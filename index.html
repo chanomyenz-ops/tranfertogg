@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v76</div>
+<div class="app-version">v77</div>
 <div class="wrap">
 
 <div class="grid">
@@ -319,6 +319,21 @@ function parseBlock(lines,bill){
       found=true;
     }
     if(found) continue;
+
+    // รองรับ "รหัส 3กลับ/6กลับ ตัวละราคา"
+    // เช่น 795 6กลับ ตัวละ20, 141 3กลับ ตัวละ100
+    const reversePerEach=line.match(/^(\d{3})\s+([36])\s*กลับ\s+ตัวละ\s*([\d,]+)\s*$/);
+    if(reversePerEach){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reversePerEach[1],
+        price:norm(reversePerEach[3]),
+        count:+reversePerEach[2],
+        side
+      });
+      continue;
+    }
 
     // กลับเลขแบบ "รหัส*จำนวนกลับ=ราคา"
     // 141*3กลับ=100 -> 3 กลับ ราคา 100
