@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v72</div>
+<div class="app-version">v76</div>
 <div class="wrap">
 
 <div class="grid">
@@ -355,6 +355,39 @@ function parseBlock(lines,bill){
       continue;
     }
 
+    // รองรับรูปแบบที่มี * เกินหลัง = เช่น 116=*10*3=30
+    // ตีความเหมือน 116=10*3=30 -> 3 กลับ ตัวละ 10, 30 คือยอดรวม
+    const reverseWithLeadingStar=line.match(/^(\d{3})\s*=\s*[*xX×]\s*([\d,]+)\s*[*xX×]\s*([36])\s*=\s*([\d,]+)\s*$/);
+    if(reverseWithLeadingStar){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reverseWithLeadingStar[1],
+        price:norm(reverseWithLeadingStar[2]),
+        count:+reverseWithLeadingStar[3],
+        total:norm(reverseWithLeadingStar[4]),
+        side
+      });
+      continue;
+    }
+
+    // รองรับ "รหัส-ราคา*จำนวนกลับ=ยอดรวม"
+    // เช่น 393-50*3=150 -> 3 กลับ ตัวละ 50 (150 คือยอดรวม)
+    //      123-20*6=120 -> 6 กลับ ตัวละ 20 (120 คือยอดรวม)
+    const reverseWithTotal=line.match(/^(\d{3})\s*(?:=|-)\s*([\d,]+)\s*[xX×*]\s*([36])\s*=\s*([\d,]+)\s*$/);
+    if(reverseWithTotal){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reverseWithTotal[1],
+        price:norm(reverseWithTotal[2]),
+        count:+reverseWithTotal[3],
+        total:norm(reverseWithTotal[4]),
+        side
+      });
+      continue;
+    }
+
     const reverseEq=line.match(/(\d{3})\s*(?:=|-)\s*([\d,]+)\s*[xX×*]\s*([36])(?=\s*(?:กลับ|กับ)?\s*$)/);
     if(reverseEq){
       flushPending();
@@ -401,6 +434,20 @@ function parseBlock(lines,bill){
     if(reverseWord){
       flushPending();
       items.push({type:"reverse",code:reverseWord[1],price:norm(reverseWord[3]),count:+reverseWord[2],side});
+      continue;
+    }
+
+    // ราคาเดียวแบบ "รหัส*ราคา" ใช้เฉพาะเมื่อมีบริบท บน/ล่าง
+    // เพื่อไม่ให้ชนกับ floating ref ปกติ เช่น 30*30
+    const sidedStarSingle=line.match(/^(\d{1,3})\s*[*xX×]\s*([\d,]+)\s*$/);
+    if((side==="top" || side==="bottom") && sidedStarSingle){
+      flushPending();
+      items.push({
+        type:"full1",
+        code:sidedStarSingle[1],
+        price:norm(sidedStarSingle[2]),
+        side
+      });
       continue;
     }
 
