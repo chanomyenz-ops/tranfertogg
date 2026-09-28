@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v87</div>
+<div class="app-version">v98</div>
 <div class="wrap">
 
 <div class="grid">
@@ -244,6 +244,10 @@ function parseBlock(lines,bill){
     // รองรับการสะกด "ตัวล่ะ" ให้มีความหมายเหมือน "ตัวละ"
     line=line.replace(/ตัวล่ะ/g,"ตัวละ");
 
+    // คำว่า "ครึ่ง" เป็นข้อความประกอบ ให้ตัดทิ้งโดยไม่เปลี่ยนราคา
+    // เช่น "670 ครึ่ง" -> "670", "72 ครึ่ง" -> "72"
+    line=line.replace(/\s*ครึ่ง\s*/g," ").trim();
+
     // ถ้าเป็นหัวข้อความ LINE และลงท้ายด้วยเลข 1 หลัก + จุด เช่น "11:02 phoenix🐣 2."
     // ให้มองเลขนั้นเป็นข้อความประกอบ ไม่ใช่รหัส
     if(/^\d{1,2}:\d{2}\s/.test(line) && /\s\d\.$/.test(line)){
@@ -281,6 +285,19 @@ function parseBlock(lines,bill){
       continue;
     }
 
+    // รองรับหลายรหัสคั่นด้วย / โดยส่วนสุดท้ายเป็นราคา 2 ค่าโดยไม่มี =
+    // เช่น 288/208/50×50, 88/08/80/28/82/100×100
+    const slashTrailingPrice = line.match(/^(\d{1,3}(?:\s*\/\s*\d{1,3})+)\s*\/\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
+    if(slashTrailingPrice){
+      const codes = slashTrailingPrice[1].split(/\s*\/\s*/).filter(Boolean);
+      const v1 = norm(slashTrailingPrice[2]);
+      const v2 = norm(slashTrailingPrice[3]);
+      for(const code of codes){
+        items.push({type:"full2", code, v1, v2, side});
+      }
+      continue;
+    }
+
     // ถ้าอยู่ใต้ บน/ล่าง และมีตัวเลข 2 ก้อน เช่น "14 100"
     // ให้ตีความเป็น รหัส + ราคาเดียว ก่อนกฎหลายรหัสคั่นด้วยช่องว่าง
     const sideSpacedSingleEarly = line.match(/^(\d{1,3})\s+([\d,]+)\s*$/);
@@ -307,6 +324,17 @@ function parseBlock(lines,bill){
       continue;
     }
 
+    // รองรับรายการรหัสหลายตัวคั่นด้วย comma แบบยังไม่มีราคา
+    // เช่น 29,92 หรือ 49,94 แล้วใช้ราคาอ้างอิงในบรรทัดถัดไป
+    const commaCodeList = line.match(/^(\d{1,3}(?:\s*,\s*\d{1,3})+)$/);
+    if(commaCodeList){
+      const codes = commaCodeList[1].split(/\s*,\s*/).filter(Boolean);
+      for(const code of codes){
+        pendingBare.push(code);
+      }
+      continue;
+    }
+
     // รองรับรายการรหัสหลายตัวคั่นด้วย /
     // เช่น 25/52/08/80/51/15/75/57 หรือ 11/33
     // กรณีมี 3 ส่วนพอดี เช่น 16/9/69 ให้ถือว่าอาจเป็นวันที่และปล่อยไปตรวจด้านล่าง
@@ -321,12 +349,57 @@ function parseBlock(lines,bill){
       }
     }
 
+    // รองรับหลายรหัสคั่นด้วย - แล้วตามด้วยราคา 2 ค่าในบรรทัดเดียว
+    // ต้องตรวจ BEFORE date detector เพื่อไม่ให้ 12-21-45 50*50 ถูกมองเป็นวันที่
+    // เช่น 49-94 25*25, 12-21-45 50*50
+    const hyphenInlineFull=line.match(/^-?\s*(\d{1,3}(?:\s*-\s*\d{1,3})+)\s*(?:=|\s+)\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
+    if(hyphenInlineFull){
+      flushPending();
+      const codes=hyphenInlineFull[1].split(/\s*-\s*/).filter(Boolean);
+      const v1=norm(hyphenInlineFull[2]), v2=norm(hyphenInlineFull[3]);
+      for(const code of codes){
+        items.push({type:"full2",code,v1,v2,side});
+      }
+      continue;
+    }
+
     // ข้ามบรรทัดที่มีวันที่อยู่ตรงไหนก็ได้ เช่น
     // 16-9-69, 16/9/69, 16.9.69, "พี่ชมพู่16-9-69☔️40"
     if(/\d{1,4}[.\-/]\d{1,2}[.\-/]\d{1,4}/.test(line)) continue;
 
-    if(/(?:^|\s)บน\.?(?:\s|$)/i.test(line)) side="top";
-    if(/(?:^|\s)ล่าง\.?(?:\s|$)/i.test(line)) side="bottom";
+    // โหมดราคาเดียวจากคำกำกับ
+    // บน/ตรง -> ค่า 1, ล่าง/โต๊ด/โต็ด/โตด -> ค่า 2
+    // ถ้าอยู่ในหัว LINE ให้สถานะนี้ส่งต่อไปยังรายการถัดไปในข้อความนั้น
+    // ราคาอ้างอิงเดี่ยวแบบระบุฝั่ง เช่น "=10 บน", "=20 ล่าง"
+    // ใช้กับ bare codes ก่อนหน้า แล้วจบสถานะฝั่งตรงบรรทัดนี้
+    const standaloneSideRef=line.match(/^\s*=\s*([\d,]+)\s*(บน|ล่าง)\s*$/);
+    if(standaloneSideRef){
+      flushPending();
+      items.push({
+        type:"ref1",
+        price:norm(standaloneSideRef[1]),
+        side:standaloneSideRef[2]==="บน" ? "top" : "bottom"
+      });
+      side="";
+      continue;
+    }
+
+    if(/(?:^|\s)(?:บน|ตรง)\.?(?:\s|$)/i.test(line)) side="top";
+    if(/(?:^|\s)(?:ล่าง|โต๊ด|โต็ด|โตด)\.?(?:\s|$)/i.test(line)) side="bottom";
+
+    // รองรับ "รหัส บน ราคา" และ "รหัส ล่าง ราคา" ในบรรทัดเดียว
+    // เช่น 728 บน 120, 728 ล่าง 120
+    const inlineSideWords=line.match(/^(\d{1,3})\s*(บน|ล่าง)\s*=?\s*([\d,]+)\s*$/);
+    if(inlineSideWords){
+      flushPending();
+      items.push({
+        type:"full1",
+        code:inlineSideWords[1],
+        price:norm(inlineSideWords[3]),
+        side:inlineSideWords[2]==="บน" ? "top" : "bottom"
+      });
+      continue;
+    }
 
     const threeDigitBetRe=/(\d{3})\s*(ตรง|โต๊ด|โต็ด|โตด)\s*=?\s*([\d,]+)/g;
     let m, found=false;
@@ -515,6 +588,20 @@ function parseBlock(lines,bill){
       continue;
     }
 
+    // ราคาอ้างอิงสำหรับเลขกลับแบบแยกบรรทัด
+    // เช่น 20*6กลับ, 20*3กลับ
+    const reverseRefOnly=line.match(/^\s*([\d,]+)\s*[*xX×]\s*([36])\s*กลับ\s*$/);
+    if(reverseRefOnly){
+      flushPending();
+      items.push({
+        type:"refReverse",
+        price:norm(reverseRefOnly[1]),
+        count:+reverseRefOnly[2],
+        side
+      });
+      continue;
+    }
+
     const refOnly=line.match(/^-*\s*=?\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*-*\s*(?:ไม่กลับ)?\s*$/);
     if(refOnly){
       flushPending();
@@ -523,6 +610,20 @@ function parseBlock(lines,bill){
     }
 
     const multiCodesFull=/((?:\d+)(?:\s*[,/]\s*\d+)+)\s*[,/]?\s*(?:=|-)\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)/g;
+
+    // รองรับหลายรหัสคั่นด้วยจุดหลายตัว แล้วตามด้วยราคา 2 ค่า
+    // เช่น 60..06...20×20
+    const dottedCodesFull=line.match(/^((?:\d{1,3}\s*\.{2,}\s*)+)([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
+    if(dottedCodesFull){
+      flushPending();
+      const codes=dottedCodesFull[1].split(/\s*\.{2,}\s*/).filter(Boolean);
+      const v1=norm(dottedCodesFull[2]), v2=norm(dottedCodesFull[3]);
+      for(const code of codes){
+        items.push({type:"full2",code,v1,v2,side});
+      }
+      continue;
+    }
+
     let mc, foundMulti=false;
     while((mc=multiCodesFull.exec(line))!==null){
       flushPending();
@@ -542,6 +643,7 @@ function parseBlock(lines,bill){
     }
     if(foundFull) continue;
 
+
     const spacedFull=line.match(/(\d+)\s+([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
     if(spacedFull){
       flushPending();
@@ -560,6 +662,14 @@ function parseBlock(lines,bill){
         price:norm(inlineSideSingle[2]),
         side:inlineSideSingle[3]==="ล่าง" ? "bottom" : "top"
       });
+      continue;
+    }
+
+    // รองรับเครื่องหมาย | / || หลังรหัส เพื่อหมายถึง "ราคาเดิม"
+    // เช่น 859=||, 93=| -> เก็บเป็น bare แล้วให้อ้างอิงราคา anchor รอบข้าง
+    const dittoPipeMark=line.match(/^(\d{1,3})\s*=\s*\|{1,2}\s*$/);
+    if(dittoPipeMark){
+      pendingBare.push(dittoPipeMark[1]);
       continue;
     }
 
@@ -665,14 +775,14 @@ function parseInput(raw){
 
       // แบบเลขบิล + จุด + ชื่อ อยู่ในหัว LINE เช่น
       // "11:49 Phonphan Khansali 13.หมิว" -> บิล 13
-      const headerDotBill=line.match(/(?:^|\s)(\d{1,3})\.\s*[^\s]+\s*$/);
+      const headerDotBill=line.match(/(?:^|\s)(\d{1,3})\.(?!\.)\s*[^\s]+\s*$/);
       if(headerDotBill){
         bill=headerDotBill[1];
         if(/^\d{1,2}:\d{2}\s+/.test(line)) continue;
       }
 
       // แบบขึ้นต้นด้วยเลขบิล + จุด + ชื่อ เช่น "17.พี่ปลา"
-      const dotBill=line.match(/^\s*(\d{1,3})\.\s*\S+/);
+      const dotBill=line.match(/^\s*(\d{1,3})\.(?!\.)\s*\S+/);
       if(dotBill){
         bill=dotBill[1];
         continue;
@@ -690,8 +800,8 @@ function parseInput(raw){
     const cleaned=msg.filter(line=>{
       if(!line) return true;
       if(/บิล(?:ที่)?\s*\d+/i.test(line)) return false;
-      if(/^\s*\d{1,3}\.\s*\S+/.test(line)) return false;
-      if(/^\d{1,2}:\d{2}\s+.*(?:^|\s)\d{1,3}\.\S+\s*$/.test(line)) return false;
+      if(/^\s*\d{1,3}\.(?!\.)\s*\S+/.test(line)) return false;
+      if(/^\d{1,2}:\d{2}\s+.*(?:^|\s)\d{1,3}\.(?!\.)\S+\s*$/.test(line)) return false;
       return true;
     });
 
@@ -720,6 +830,8 @@ function parseInput(raw){
   const merged=[];
   for(const block of blocks){
     const onlyRefs = block.items.length>0 && block.items.every(it => it.type==="ref2");
+    const onlySingleRefs = block.items.length>0 && block.items.every(it => it.type==="ref1");
+    const onlyReverseRefs = block.items.length>0 && block.items.every(it => it.type==="refReverse");
     const prev = merged.length ? merged[merged.length-1] : null;
 
     if(onlyRefs && prev && prev.bill===block.bill){
@@ -727,6 +839,34 @@ function parseInput(raw){
       const prevHasAnyRef = prev.items.some(it => it.type==="ref2" || it.type==="full2");
 
       if(prevHasBare && !prevHasAnyRef){
+        prev.items.push(...block.items);
+        continue;
+      }
+    }
+
+    if(onlySingleRefs && prev && prev.bill===block.bill){
+      const prevHasBare = prev.items.some(it => it.type==="bare");
+      const prevHasAnyRef = prev.items.some(it =>
+        it.type==="ref1" || it.type==="ref2" || it.type==="full1" || it.type==="full2"
+      );
+
+      if(prevHasBare && !prevHasAnyRef){
+        prev.items.push(...block.items);
+        continue;
+      }
+    }
+
+    // เช่น:
+    // 289
+    // 358
+    //
+    // 20*6กลับ
+    // ให้ reverse reference ย้อนกลับไปกำหนดเลข bare ในกลุ่มก่อนหน้า
+    if(onlyReverseRefs && prev && prev.bill===block.bill){
+      const prevHasBare = prev.items.some(it => it.type==="bare");
+      const prevHasReverseRef = prev.items.some(it => it.type==="refReverse" || it.type==="reverse");
+
+      if(prevHasBare && !prevHasReverseRef){
         prev.items.push(...block.items);
         continue;
       }
@@ -760,11 +900,19 @@ function inferReverseRule(items,index){
       prev={price:it.price,count:it.count,side:it.side||"normal",dist:index-i};
       break;
     }
+    if(it && it.type==="refReverse" && codeLen===3){
+      prev={price:it.price,count:it.count,side:it.side||"normal",dist:index-i};
+      break;
+    }
   }
 
   for(let i=index+1;i<items.length;i++){
     const it=items[i];
     if(it && it.type==="reverse" && it.code && it.code.length===codeLen){
+      next={price:it.price,count:it.count,side:it.side||"normal",dist:i-index};
+      break;
+    }
+    if(it && it.type==="refReverse" && codeLen===3){
       next={price:it.price,count:it.count,side:it.side||"normal",dist:i-index};
       break;
     }
@@ -816,7 +964,7 @@ function inferReversePrices(items,index){
 }
 
 function getSingleRef(it){
-  if(it.type==="full1"){
+  if(it.type==="full1" || it.type==="ref1"){
     if(it.side==="top") return ["top",it.price];
     if(it.side==="bottom") return ["bottom",it.price];
   }
@@ -851,6 +999,24 @@ function inferBare(items,index){
   }
 
   const codeLen = current.code ? current.code.length : 0;
+
+  // ถ้า ref1 อยู่ก่อน bare และ ref2 อยู่หลัง bare:
+  // ref1 ถูกออกแบบให้ใช้ย้อนกลับกับกลุ่มก่อนหน้า จึงให้ ref2 หลัง bare ชนะ
+  let prevBoundaryRef1=null, nextBoundaryRef2=null;
+  for(let i=index-1;i>=0;i--){
+    if(items[i].type==="ref1"){ prevBoundaryRef1={dist:index-i}; break; }
+    if(items[i].type==="ref2" || items[i].type==="full2") break;
+  }
+  for(let i=index+1;i<items.length;i++){
+    if(items[i].type==="ref2"){
+      nextBoundaryRef2={it:items[i],dist:i-index};
+      break;
+    }
+    if(items[i].type==="ref1" || items[i].type==="full2") break;
+  }
+  if(prevBoundaryRef1 && nextBoundaryRef2){
+    return [nextBoundaryRef2.it.v1,nextBoundaryRef2.it.v2];
+  }
 
   // PRIORITY -1:
   // หา anchor ที่ "รหัสสอดคล้องกัน" ก่อน
@@ -951,7 +1117,7 @@ function inferBare(items,index){
 
     if(it.type==="bare") continue;
 
-    if(it.type==="full1"){
+    if(it.type==="full1" || it.type==="ref1"){
       const singleValue = it.price ?? it.v1 ?? it.value ?? "";
       if(it.side==="bottom") return ["",singleValue];
       return [singleValue,""];
@@ -1034,6 +1200,34 @@ function inferBare(items,index){
   }
   if(prevRef) return prevRef.value;
   if(nextRef) return nextRef.value;
+
+  // ราคาอ้างอิงเดี่ยวแบบไม่มีรหัส เช่น "=10 บน"
+  // ใช้กับ bare codes ในกลุ่มเดียวกัน โดยเลือกตัวที่ใกล้ที่สุด
+  let prevRef1=null, nextRef1=null;
+  for(let i=index-1;i>=0;i--){
+    const it=items[i];
+    if(it.type==="ref1"){
+      prevRef1={it,dist:index-i};
+      break;
+    }
+    if(it.type==="ref2" || it.type==="full2") break;
+  }
+  for(let i=index+1;i<items.length;i++){
+    const it=items[i];
+    if(it.type==="ref1"){
+      nextRef1={it,dist:i-index};
+      break;
+    }
+    if(it.type==="ref2" || it.type==="full2") break;
+  }
+  const chosenRef1 = prevRef1 && nextRef1
+    ? (prevRef1.dist<=nextRef1.dist ? prevRef1.it : nextRef1.it)
+    : (prevRef1 ? prevRef1.it : (nextRef1 ? nextRef1.it : null));
+  if(chosenRef1){
+    return chosenRef1.side==="bottom"
+      ? ["",chosenRef1.price]
+      : [chosenRef1.price,""];
+  }
 
   // 4) ก่อน fallback ข้ามจำนวนหลัก:
   // ถ้ามีรายการที่มีราคาและจำนวนหลักเท่ากันอยู่ในกลุ่ม
