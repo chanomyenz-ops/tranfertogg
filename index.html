@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v77</div>
+<div class="app-version">v79</div>
 <div class="wrap">
 
 <div class="grid">
@@ -319,6 +319,22 @@ function parseBlock(lines,bill){
       found=true;
     }
     if(found) continue;
+
+    // รองรับ "รหัส ราคา 3/6 กลับ"
+    // เช่น 242 20 3 กลับ, 245 20 6 กลับ
+    // เพิ่ม 3 และ 6 เป็นคู่เสมอ
+    const reversePriceCountWords=line.match(/^(\d{3})\s+([\d,]+)\s+([36])\s*กลับ\s*$/);
+    if(reversePriceCountWords){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reversePriceCountWords[1],
+        price:norm(reversePriceCountWords[2]),
+        count:+reversePriceCountWords[3],
+        side
+      });
+      continue;
+    }
 
     // รองรับ "รหัส 3กลับ/6กลับ ตัวละราคา"
     // เช่น 795 6กลับ ตัวละ20, 141 3กลับ ตัวละ100
