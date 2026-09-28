@@ -113,9 +113,30 @@ body.dark #preview tr.uncertain{
 }
 
 @media(max-width:760px){.grid{grid-template-columns:1fr}}
+
+.app-version{
+  position:fixed;
+  top:12px;
+  right:16px;
+  z-index:9999;
+  font-size:13px;
+  font-weight:700;
+  color:#6b7280;
+  background:rgba(255,255,255,.88);
+  border:1px solid #d1d5db;
+  border-radius:999px;
+  padding:5px 9px;
+  backdrop-filter:blur(6px);
+}
+body.dark .app-version{
+  color:#d1d5db;
+  background:rgba(17,24,39,.88);
+  border-color:#4b5563;
+}
 </style>
 </head>
 <body>
+<div class="app-version">v68</div>
 <div class="wrap">
 
 <div class="grid">
