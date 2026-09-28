@@ -306,7 +306,7 @@ function parseBlock(lines,bill){
       continue;
     }
 
-    const reverseEq=line.match(/(\d{3})\s*(?:=|-)\s*([\d,]+)\s*[xX×*]\s*([36])(?:\s*(?:กลับ|กับ))?/);
+    const reverseEq=line.match(/(\d{3})\s*(?:=|-)\s*([\d,]+)\s*[xX×*]\s*([36])(?=\s*(?:กลับ|กับ)?\s*$)/);
     if(reverseEq){
       flushPending();
       items.push({type:"reverse",code:reverseEq[1],price:norm(reverseEq[2]),count:+reverseEq[3],side});
