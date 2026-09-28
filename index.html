@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v85</div>
+<div class="app-version">v87</div>
 <div class="wrap">
 
 <div class="grid">
@@ -522,7 +522,7 @@ function parseBlock(lines,bill){
       continue;
     }
 
-    const multiCodesFull=/((?:\d+)(?:\s*[,/]\s*\d+)+)\s*(?:=|-)\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)/g;
+    const multiCodesFull=/((?:\d+)(?:\s*[,/]\s*\d+)+)\s*[,/]?\s*(?:=|-)\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)/g;
     let mc, foundMulti=false;
     while((mc=multiCodesFull.exec(line))!==null){
       flushPending();
