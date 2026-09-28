@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v68</div>
+<div class="app-version">v72</div>
 <div class="wrap">
 
 <div class="grid">
@@ -278,6 +278,18 @@ function parseBlock(lines,bill){
       continue;
     }
 
+    // รองรับรายการรหัสหลายตัวคั่นด้วยช่องว่าง
+    // เช่น 875 261 611 919 527 619
+    // เก็บเป็น bare ทีละตัว เพื่อให้ราคาอ้างอิงในบรรทัดถัดไป เช่น =40*40
+    const spaceCodeList = line.match(/^(\d{1,3}(?:\s+\d{1,3}){1,})$/);
+    if(spaceCodeList){
+      const codes = spaceCodeList[1].trim().split(/\s+/).filter(Boolean);
+      for(const code of codes){
+        items.push({type:"bare", code, side});
+      }
+      continue;
+    }
+
     // รองรับรายการรหัสหลายตัวคั่นด้วย /
     // เช่น 25/52/08/80/51/15/75/57 หรือ 11/33
     // กรณีมี 3 ส่วนพอดี เช่น 16/9/69 ให้ถือว่าอาจเป็นวันที่และปล่อยไปตรวจด้านล่าง
@@ -307,6 +319,22 @@ function parseBlock(lines,bill){
       found=true;
     }
     if(found) continue;
+
+    // กลับเลขแบบ "รหัส*จำนวนกลับ=ราคา"
+    // 141*3กลับ=100 -> 3 กลับ ราคา 100
+    // 014*6กลับ=50  -> 6 กลับ ราคา 50
+    const reversePrefix=line.match(/^(\d{3})\s*[*xX×]\s*([36])\s*กลับ\s*=\s*([\d,]+)\s*$/);
+    if(reversePrefix){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reversePrefix[1],
+        price:norm(reversePrefix[3]),
+        count:+reversePrefix[2],
+        side
+      });
+      continue;
+    }
 
     // 3 กลับแบบมีราคาแยกแต่ละเลข:
     // 544=65×15×15 -> 544=65, 454=15, 445=15
@@ -407,6 +435,20 @@ function parseBlock(lines,bill){
     if(spacedFull){
       flushPending();
       items.push({type:"full2",code:spacedFull[1],v1:norm(spacedFull[2]),v2:norm(spacedFull[3]),side});
+      continue;
+    }
+
+    // ราคาเดียวที่ระบุด้านไว้ในวงเล็บ เช่น 77=20(ล่าง), 35-20(บน)
+    // คำในวงเล็บมี priority เหนือ side ที่สืบทอดจากบรรทัดก่อนหน้า
+    const inlineSideSingle=line.match(/^(\d{1,3})\s*(?:=|-)\s*([\d,]+)\s*\(\s*(บน|ล่าง)\s*\)\s*$/i);
+    if(inlineSideSingle){
+      flushPending();
+      items.push({
+        type:"full1",
+        code:inlineSideSingle[1],
+        price:norm(inlineSideSingle[2]),
+        side:inlineSideSingle[3]==="ล่าง" ? "bottom" : "top"
+      });
       continue;
     }
 
@@ -701,6 +743,24 @@ function inferBare(items,index){
     }
 
     return prevRelated ? prevRelated.value : nextRelated.value;
+  }
+
+  // PRIORITY -0.5:
+  // ถ้า "ไม่พบรหัสสอดคล้องกัน" ค่อยใช้ราคาเดียวจากรายการถัดไปเป็น anchor ของชุด bare
+  // เช่น 01 / 10 / 00 / 77=20(ล่าง)
+  // => 01,10,00 ใช้ค่า2=20 ตาม 77
+  for(let i=index+1;i<items.length;i++){
+    const it=items[i];
+
+    if(it.type==="bare") continue;
+
+    if(it.type==="full1"){
+      const singleValue = it.price ?? it.v1 ?? it.value ?? "";
+      if(it.side==="bottom") return ["",singleValue];
+      return [singleValue,""];
+    }
+
+    break;
   }
 
   // PRIORITY 0:
