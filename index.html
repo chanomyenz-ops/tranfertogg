@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v98</div>
+<div class="app-version">v99</div>
 <div class="wrap">
 
 <div class="grid">
@@ -243,6 +243,9 @@ function parseBlock(lines,bill){
 
     // รองรับการสะกด "ตัวล่ะ" ให้มีความหมายเหมือน "ตัวละ"
     line=line.replace(/ตัวล่ะ/g,"ตัวละ");
+
+    // "อย่างละ" ใช้ความหมายเดียวกับ "ตัวละ"
+    line=line.replace(/อย่างละ/g,"ตัวละ");
 
     // คำว่า "ครึ่ง" เป็นข้อความประกอบ ให้ตัดทิ้งโดยไม่เปลี่ยนราคา
     // เช่น "670 ครึ่ง" -> "670", "72 ครึ่ง" -> "72"
