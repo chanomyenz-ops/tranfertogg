@@ -579,13 +579,60 @@ function inferBare(items,index){
 
   // PRIORITY -1:
   // หา anchor ที่ "รหัสสอดคล้องกัน" ก่อน
-  // เช่น 18 <-> 81, 16 <-> 61, 34 <-> 43
+  // เช่น 18 <-> 81, 16 <-> 61, 591 <-> 519 <-> 195
   // สำหรับรหัสยาวเท่ากัน ให้ถือว่าสอดคล้องกันถ้าใช้ชุดตัวเลขเดียวกัน
   function sameDigits(a,b){
     if(!a || !b || a.length!==b.length) return false;
     return a.split("").sort().join("") === b.split("").sort().join("");
   }
 
+  // 1) ถ้ารหัสสอดคล้องกันกับรายการราคาเดียว (full1)
+  // ให้ใช้ราคาเดียวก่อน fallback ไปหา 2 ค่า
+  // เช่น 591=10 ... 519 915 951 159 ... 195=10
+  // => ทั้งชุดใช้ค่า 1 = 10
+  let prevRelatedSingle=null;
+  let nextRelatedSingle=null;
+
+  for(let i=index-1;i>=0;i--){
+    const it=items[i];
+    if(it.type==="full1" && it.code && sameDigits(current.code,it.code)){
+      const singleValue = it.price ?? it.v1 ?? it.value ?? "";
+      prevRelatedSingle={value:singleValue, side:it.side || "normal", dist:index-i};
+      break;
+    }
+  }
+
+  for(let i=index+1;i<items.length;i++){
+    const it=items[i];
+    if(it.type==="full1" && it.code && sameDigits(current.code,it.code)){
+      const singleValue = it.price ?? it.v1 ?? it.value ?? "";
+      nextRelatedSingle={value:singleValue, side:it.side || "normal", dist:i-index};
+      break;
+    }
+  }
+
+  if(prevRelatedSingle || nextRelatedSingle){
+    let chosen=null;
+
+    if(prevRelatedSingle && nextRelatedSingle){
+      if(prevRelatedSingle.value===nextRelatedSingle.value){
+        chosen=prevRelatedSingle;
+      }else if(prevRelatedSingle.dist < nextRelatedSingle.dist){
+        chosen=prevRelatedSingle;
+      }else if(nextRelatedSingle.dist < prevRelatedSingle.dist){
+        chosen=nextRelatedSingle;
+      }else{
+        return null;
+      }
+    }else{
+      chosen=prevRelatedSingle || nextRelatedSingle;
+    }
+
+    if(chosen.side==="bottom") return ["",chosen.value];
+    return [chosen.value,""];
+  }
+
+  // 2) ถัดมาค่อยหา anchor 2 ค่าที่รหัสสอดคล้องกัน
   let prevRelated=null;
   let nextRelated=null;
 
