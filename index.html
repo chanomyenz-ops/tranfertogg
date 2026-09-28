@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v83</div>
+<div class="app-version">v85</div>
 <div class="wrap">
 
 <div class="grid">
@@ -336,6 +336,22 @@ function parseBlock(lines,bill){
       found=true;
     }
     if(found) continue;
+
+    // รองรับ "รหัส 3/6 กลับ * ราคา"
+    // เช่น 669 3 กลับ *10, 698 6 กลับ *20
+    // เพิ่ม 3 และ 6 เป็นคู่เสมอ
+    const reverseCountThenPrice=line.match(/^(\d{3})\s+([36])\s*กลับ\s*[*xX×]\s*([\d,]+)\s*$/);
+    if(reverseCountThenPrice){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reverseCountThenPrice[1],
+        price:norm(reverseCountThenPrice[3]),
+        count:+reverseCountThenPrice[2],
+        side
+      });
+      continue;
+    }
 
     // รองรับ "รหัส ราคา 3/6 กลับ"
     // เช่น 242 20 3 กลับ, 245 20 6 กลับ
@@ -726,6 +742,45 @@ function isTwoValueRef(it){
   return it.type==="full2" || it.type==="ref2";
 }
 
+
+function inferReverseRule(items,index){
+  const current=items[index];
+  if(!current || current.type!=="bare" || !current.code) return null;
+
+  const codeLen=current.code.length;
+
+  // รหัสสอดคล้องกันยังมี priority สูงกว่า helper นี้
+  // helper นี้ใช้เมื่อไม่มี related-code anchor แล้ว:
+  // หา reverse anchor ที่จำนวนหลักเท่ากันและใกล้ที่สุด
+  let prev=null, next=null;
+
+  for(let i=index-1;i>=0;i--){
+    const it=items[i];
+    if(it && it.type==="reverse" && it.code && it.code.length===codeLen){
+      prev={price:it.price,count:it.count,side:it.side||"normal",dist:index-i};
+      break;
+    }
+  }
+
+  for(let i=index+1;i<items.length;i++){
+    const it=items[i];
+    if(it && it.type==="reverse" && it.code && it.code.length===codeLen){
+      next={price:it.price,count:it.count,side:it.side||"normal",dist:i-index};
+      break;
+    }
+  }
+
+  if(prev && next){
+    const same = prev.price===next.price && prev.count===next.count && prev.side===next.side;
+    if(same) return prev;
+    if(prev.dist < next.dist) return prev;
+    if(next.dist < prev.dist) return next;
+    return null;
+  }
+
+  return prev || next || null;
+}
+
 function inferReversePrices(items,index){
   // ใช้กับรหัส 3 ตัวที่พิมพ์เดี่ยวเท่านั้น
   const current=items[index];
@@ -980,7 +1035,18 @@ function inferBare(items,index){
   if(prevRef) return prevRef.value;
   if(nextRef) return nextRef.value;
 
-  // 4) fallback: ถ้าไม่มี anchor จำนวนหลักเดียวกัน ให้ใช้ full2 ที่ใกล้ที่สุด แม้คนละจำนวนหลัก
+  // 4) ก่อน fallback ข้ามจำนวนหลัก:
+  // ถ้ามีรายการที่มีราคาและจำนวนหลักเท่ากันอยู่ในกลุ่ม
+  // ห้ามข้ามไปหยิบ full2 คนละจำนวนหลัก
+  // เช่น 914 จะไม่ไปอ้าง 98=100*100 ถ้าด้านล่างมี reverse 3 หลักอยู่แล้ว
+  const hasSameLengthPriced = items.some((it,idx)=>{
+    if(idx===index || !it.code || it.code.length!==codeLen) return false;
+    return ["full2","full1","reverse","reversePrices","direct3"].includes(it.type);
+  });
+  if(hasSameLengthPriced) return null;
+
+  // 5) fallback สุดท้าย: ถ้าไม่มี anchor จำนวนหลักเดียวกันจริง ๆ
+  // ค่อยใช้ full2 ที่ใกล้ที่สุดแม้คนละจำนวนหลัก
   let prevAny=null, nextAny=null;
   for(let i=index-1;i>=0;i--){
     const it=items[i];
@@ -1133,6 +1199,40 @@ function convertOrder(){
           }
 
         }else{
+          // Priority 1: รหัสสอดคล้องกัน (same digits) ยังมาก่อนเสมอ
+          const sameDigits=(a,b)=>a && b && a.length===b.length &&
+            a.split("").sort().join("")===b.split("").sort().join("");
+
+          const hasRelatedPriced=block.items.some((it,idx2)=>{
+            if(idx2===index || !it.code || !sameDigits(item.code,it.code)) return false;
+            return ["full1","full2","reverse","reversePrices","direct3"].includes(it.type);
+          });
+
+          if(!hasRelatedPriced){
+            // Priority 2: ถ้าไม่มีรหัสสอดคล้องกัน
+            // bare code สามารถสืบทอดกฎ 3/6 กลับจาก reverse anchor
+            // ที่จำนวนหลักเท่ากันได้ เช่น 914 -> อ้าง 698 6กลับ *20
+            const reverseRule=inferReverseRule(block.items,index);
+
+            if(reverseRule){
+              const perms=orderedPermutations(item.code).slice(0,reverseRule.count);
+
+              for(const code of perms){
+                if(reverseRule.side==="bottom"){
+                  rows.push({values:[block.bill,code,"",reverseRule.price],uncertain:false});
+                }else{
+                  rows.push({values:[block.bill,code,reverseRule.price,""],uncertain:false});
+                }
+              }
+
+              if(perms.length!==reverseRule.count){
+                reverseWarnings++;
+              }
+              return;
+            }
+          }
+
+          // Priority อื่น ๆ ใช้ inferBare เดิม
           const inferred=inferBare(block.items,index);
           if(inferred){
             rows.push({values:[block.bill,item.code,inferred[0],inferred[1]],uncertain:false});
