@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v104</div>
+<div class="app-version">v109</div>
 <div class="wrap">
 
 <div class="grid">
@@ -419,6 +419,20 @@ function parseBlock(lines,bill){
     // 16-9-69, 16/9/69, 16.9.69, "พี่ชมพู่16-9-69☔️40"
     if(/\d{1,4}[.\-/]\d{1,2}[.\-/]\d{1,4}/.test(line)) continue;
 
+    // รองรับ "รหัส-โต๊ด ราคา" / "รหัส-ตรง ราคา"
+    // เช่น 978-โต๊ด 120 -> ค่า2=120, 978-ตรง 120 -> ค่า1=120
+    const hyphenSideBet=line.match(/^(\d{1,3})\s*-\s*(ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*([\d,]+)\s*$/i);
+    if(hyphenSideBet){
+      flushPending();
+      items.push({
+        type:"full1",
+        code:hyphenSideBet[1],
+        price:norm(hyphenSideBet[3]),
+        side:/(?:ตรง|บน)/i.test(hyphenSideBet[2]) ? "top" : "bottom"
+      });
+      continue;
+    }
+
     // โหมดราคาเดียวจากคำกำกับ
     // บน/ตรง -> ค่า 1, ล่าง/โต๊ด/โต็ด/โตด -> ค่า 2
     // ถ้าอยู่ในหัว LINE ให้สถานะนี้ส่งต่อไปยังรายการถัดไปในข้อความนั้น
@@ -462,7 +476,12 @@ function parseBlock(lines,bill){
       items.push({type:"direct3",code:m[1],price:norm(m[3]),side:m[2]==="ตรง"?"top":"bottom"});
       found=true;
     }
-    if(found) continue;
+    // ถ้าเป็น "รหัส ตรง/โต๊ด ราคา" ในบรรทัดเดียว
+    // คำกำกับฝั่งมีผลเฉพาะรายการนั้น ไม่ส่งต่อไปบรรทัดถัดไป
+    if(found){
+      side="";
+      continue;
+    }
 
     // รองรับ "รหัส 3/6 กลับ * ราคา"
     // เช่น 669 3 กลับ *10, 698 6 กลับ *20
@@ -720,6 +739,15 @@ function parseBlock(lines,bill){
     }
     if(foundMulti) continue;
 
+    // รองรับรหัสตามด้วยจุด 1 ตัวแล้วราคา เช่น 52. 150x150
+    // จุดกรณีนี้เป็นตัวคั่น ไม่ใช่เลขบิล
+    const dottedCodeFull=line.match(/^(\d{1,3})\.\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
+    if(dottedCodeFull){
+      flushPending();
+      items.push({type:"full2",code:dottedCodeFull[1],v1:norm(dottedCodeFull[2]),v2:norm(dottedCodeFull[3]),side});
+      continue;
+    }
+
     const multiFullRe=/(\d+)\s*(?:=|-)\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)/g;
     let mf, foundFull=false;
     while((mf=multiFullRe.exec(line))!==null){
@@ -789,6 +817,20 @@ function parseBlock(lines,bill){
     if(singles.length){
       flushPending();
       for(const sm of singles) items.push({type:"full1",code:sm[1],price:norm(sm[2]),side});
+      continue;
+    }
+
+    // รองรับราคาอ้างอิงเดี่ยวแบบ "ตัวละ ราคา"
+    // เช่น ภายใต้หัวข้อ "บน": 17 / 57 / 46 / 64 / ตัวละ 200
+    // ให้ bare codes ก่อนหน้ารับค่า1=200; ถ้าอยู่ใต้ "ล่าง" ให้ลงค่า2
+    const perEachSingleRef=line.match(/^ตัวละ\s*([\d,]+)\s*$/);
+    if(perEachSingleRef){
+      flushPending();
+      items.push({
+        type:"ref1",
+        price:norm(perEachSingleRef[1]),
+        side
+      });
       continue;
     }
 
@@ -892,6 +934,13 @@ function parseInput(raw){
   for(const msg of messages){
     let bill="";
     for(const line of msg){
+      // แบบวงเล็บเดี่ยว: "(53)" -> บิล 53
+      const standaloneParenBill=line.match(/^\s*\((\d{1,3})\)\s*$/);
+      if(standaloneParenBill){
+        bill=standaloneParenBill[1];
+        continue;
+      }
+
       // แบบปกติ: บิล57 / บิลที่ 57
       const bm=line.match(/บิล(?:ที่)?\s*(\d+)/i);
       if(bm){
@@ -901,14 +950,14 @@ function parseInput(raw){
 
       // แบบเลขบิล + จุด + ชื่อ อยู่ในหัว LINE เช่น
       // "11:49 Phonphan Khansali 13.หมิว" -> บิล 13
-      const headerDotBill=line.match(/(?:^|\s)(\d{1,3})\.(?!\.)\s*[^\s]+\s*$/);
+      const headerDotBill=line.match(/(?:^|\s)(\d{1,3})\.(?!\.)\s*([^\d\s].*)$/);
       if(headerDotBill){
         bill=headerDotBill[1];
         if(/^\d{1,2}:\d{2}\s+/.test(line)) continue;
       }
 
       // แบบขึ้นต้นด้วยเลขบิล + จุด + ชื่อ เช่น "17.พี่ปลา"
-      const dotBill=line.match(/^\s*(\d{1,3})\.(?!\.)\s*\S+/);
+      const dotBill=line.match(/^\s*(\d{1,3})\.(?!\.)\s*[^\d\s]\S*/);
       if(dotBill){
         bill=dotBill[1];
         continue;
@@ -921,13 +970,25 @@ function parseInput(raw){
       }
     }
 
+    // ถ้าหัว LINE มีรายการ "รหัส-โต๊ด/ตรง ราคา" ต่อท้ายในบรรทัดเดียว
+    // ให้ตัดส่วนหัว LINE ออกและส่งเฉพาะรายการเข้า parser
+    // เช่น "13:12 phoenix🐣 978-โต๊ด 120" -> "978-โต๊ด 120"
+    const normalizedMsg=msg.map(line=>{
+      if(/^\d{1,2}:\d{2}\s+/.test(line)){
+        const tail=line.match(/(?:^|\s)(\d{1,3}\s*-\s*(?:ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*[\d,]+)\s*$/i);
+        if(tail) return tail[1].trim();
+      }
+      return line;
+    });
+
     // ตัดทุกบรรทัดที่เป็น header/ป้ายเลขบิลออกจากการ parse รายการ
     // เช่น "13:48 Simon Pakin บิล 15" เพื่อไม่ให้ 15 กลายเป็นรหัส
-    const cleaned=msg.filter(line=>{
+    const cleaned=normalizedMsg.filter(line=>{
       if(!line) return true;
       if(/บิล(?:ที่)?\s*\d+/i.test(line)) return false;
-      if(/^\s*\d{1,3}\.(?!\.)\s*\S+/.test(line)) return false;
-      if(/^\d{1,2}:\d{2}\s+.*(?:^|\s)\d{1,3}\.(?!\.)\S+\s*$/.test(line)) return false;
+      if(/^\s*\(\d{1,3}\)\s*$/.test(line)) return false;
+      if(/^\s*\d{1,3}\.(?!\.)\s*[^\d\s]\S*/.test(line)) return false;
+      if(/^\d{1,2}:\d{2}\s+.*(?:^|\s)\d{1,3}\.(?!\.)[^\d\s]\S*\s*$/.test(line)) return false;
       return true;
     });
 
