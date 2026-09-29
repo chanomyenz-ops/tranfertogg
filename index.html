@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v109</div>
+<div class="app-version">v114</div>
 <div class="wrap">
 
 <div class="grid">
@@ -404,7 +404,7 @@ function parseBlock(lines,bill){
     // รองรับหลายรหัสคั่นด้วย - แล้วตามด้วยราคา 2 ค่าในบรรทัดเดียว
     // ต้องตรวจ BEFORE date detector เพื่อไม่ให้ 12-21-45 50*50 ถูกมองเป็นวันที่
     // เช่น 49-94 25*25, 12-21-45 50*50
-    const hyphenInlineFull=line.match(/^-?\s*(\d{1,3}(?:\s*-\s*\d{1,3})+)\s*(?:=|\s+)\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
+    const hyphenInlineFull=line.match(/^-?\s*(\d{1,3}(?:\s*-\s*\d{1,3})+)\s*(?:=|\s+|['’])\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
     if(hyphenInlineFull){
       flushPending();
       const codes=hyphenInlineFull[1].split(/\s*-\s*/).filter(Boolean);
@@ -450,7 +450,9 @@ function parseBlock(lines,bill){
       continue;
     }
 
-    if(/สามตัวบน/.test(line)) side="top";
+    // โหมดทั้งบนและล่าง เช่น "บน/ล่าง"
+    if(/^\s*บน\s*[/\-]\s*ล่าง\s*$/i.test(line)) side="both";
+    else if(/สามตัวบน/.test(line)) side="top";
     else if(/สามตัวล่าง/.test(line)) side="bottom";
     else if(/(?:^|\s)(?:บน|ตรง)\.?(?:\s|$)/i.test(line)) side="top";
     else if(/(?:^|\s)(?:ล่าง|โต๊ด|โต็ด|โตด)\.?(?:\s|$)/i.test(line)) side="bottom";
@@ -494,6 +496,22 @@ function parseBlock(lines,bill){
         code:reverseCountThenPrice[1],
         price:norm(reverseCountThenPrice[3]),
         count:+reverseCountThenPrice[2],
+        side
+      });
+      continue;
+    }
+
+    // รองรับ "รหัส ราคา=3กลับ" / "รหัส ราคา=6กลับ"
+    // เช่น 185 20=6กลับ -> 6 กลับ ตัวละ 20
+    // เพิ่ม 3 และ 6 เป็นคู่เสมอ
+    const reversePriceEqCount=line.match(/^(\d{3})\s+([\d,]+)\s*=\s*([36])\s*(?:กลับ|กับ)\s*$/);
+    if(reversePriceEqCount){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reversePriceEqCount[1],
+        price:norm(reversePriceEqCount[2]),
+        count:+reversePriceEqCount[3],
         side
       });
       continue;
@@ -625,6 +643,21 @@ function parseBlock(lines,bill){
         price:norm(reverseWithTotal[2]),
         count:+reverseWithTotal[3],
         total:norm(reverseWithTotal[4]),
+        side
+      });
+      continue;
+    }
+
+    // รองรับจำนวนกลับที่ใส่วงเล็บ เช่น 864=20×(6กลับ), 303=30×(3กลับ)
+    // เพิ่ม 3 และ 6 เป็นคู่เสมอ
+    const reverseEqParen=line.match(/^(\d{3})\s*(?:=|-)\s*([\d,]+)\s*[xX×*]\s*\(\s*([36])\s*(?:กลับ|กับ)\s*\)\s*$/);
+    if(reverseEqParen){
+      flushPending();
+      items.push({
+        type:"reverse",
+        code:reverseEqParen[1],
+        price:norm(reverseEqParen[2]),
+        count:+reverseEqParen[3],
         side
       });
       continue;
@@ -826,11 +859,12 @@ function parseBlock(lines,bill){
     const perEachSingleRef=line.match(/^ตัวละ\s*([\d,]+)\s*$/);
     if(perEachSingleRef){
       flushPending();
-      items.push({
-        type:"ref1",
-        price:norm(perEachSingleRef[1]),
-        side
-      });
+      const price=norm(perEachSingleRef[1]);
+      if(side==="both"){
+        items.push({type:"ref2",v1:price,v2:price,side});
+      }else{
+        items.push({type:"ref1",price,side});
+      }
       continue;
     }
 
@@ -975,8 +1009,16 @@ function parseInput(raw){
     // เช่น "13:12 phoenix🐣 978-โต๊ด 120" -> "978-โต๊ด 120"
     const normalizedMsg=msg.map(line=>{
       if(/^\d{1,2}:\d{2}\s+/.test(line)){
-        const tail=line.match(/(?:^|\s)(\d{1,3}\s*-\s*(?:ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*[\d,]+)\s*$/i);
-        if(tail) return tail[1].trim();
+        // 1) รหัส-โต๊ด/ตรง ราคา
+        const sideTail=line.match(/(?:^|\s)(\d{1,3}\s*-\s*(?:ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*[\d,]+)\s*$/i);
+        if(sideTail) return sideTail[1].trim();
+
+        // 2) หลายรหัสคั่นด้วย - แล้วตามด้วยราคา 2 ค่า
+        // รองรับทั้ง = และ ' ก่อนราคา เช่น:
+        // 20:33 Simon Pakin 543-43-34-54-45-35-53'100×100
+        // 20:33 Simon Pakin 53-35-43-34=100×100
+        const hyphenListTail=line.match(/(?:^|\s)(\d{1,3}(?:\s*-\s*\d{1,3})+\s*(?:=|['’])\s*[\d,]+\s*[*xX×❎✕✖+]\s*[\d,]+)\s*$/);
+        if(hyphenListTail) return hyphenListTail[1].trim();
       }
       return line;
     });
