@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v123</div>
+<div class="app-version">v124</div>
 <div class="wrap">
 
 <div class="grid">
@@ -359,6 +359,22 @@ function parseBlock(lines,bill){
         type:"full1",
         code:sideSpacedSingleEarly[1],
         price:norm(sideSpacedSingleEarly[2]),
+        side
+      });
+      continue;
+    }
+
+    // แยก "รหัส + ราคาเดียว" ออกจากรายการรหัส 2 ตัว
+    // ถ้ามีตัวเลข 2 ก้อนและจำนวนหลักต่างกัน เช่น 333 10, 14 100, 98 200
+    // ให้ตีความเป็น code + single price ก่อน
+    // แต่กรณีจำนวนหลักเท่ากัน เช่น 47 74 ให้คงเป็น code list
+    const twoTokenSingle=line.match(/^(\d{1,3})\s+([\d,]+)\s*$/);
+    if(twoTokenSingle && twoTokenSingle[1].length !== twoTokenSingle[2].replace(/,/g,"").length){
+      flushPending();
+      items.push({
+        type:"full1",
+        code:twoTokenSingle[1],
+        price:norm(twoTokenSingle[2]),
         side
       });
       continue;
