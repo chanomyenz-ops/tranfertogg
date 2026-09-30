@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v124</div>
+<div class="app-version">v126</div>
 <div class="wrap">
 
 <div class="grid">
@@ -263,6 +263,15 @@ function parseBlock(lines,bill){
     // อนุญาตให้มีจุดท้ายบรรทัด เช่น 30*30. หรือ 61 100*100.
     // ตัดเฉพาะจุดที่อยู่ท้ายสุด เพื่อไม่กระทบรูปแบบอื่น
     line=line.replace(/[.。]+\s*$/,"").trim();
+
+    // รองรับรหัส 2 ตัวคั่นด้วย - เมื่อจำนวนหลักเท่ากัน เช่น 82-28
+    // ให้เป็น code list 2 ตัว ไม่ใช่ code 82 + ราคา 28
+    // แต่ 64-100 / 437-20 ซึ่งจำนวนหลักต่างกันยังคงเป็นราคาเดียวตามเดิม
+    const hyphenPairCodes = line.match(/^(\d{1,3})\s*-\s*(\d{1,3})$/);
+    if(hyphenPairCodes && hyphenPairCodes[1].length===hyphenPairCodes[2].length){
+      pendingBare.push(hyphenPairCodes[1], hyphenPairCodes[2]);
+      continue;
+    }
 
     // รองรับรายการรหัสหลายตัวคั่นด้วย - ก่อนตรวจวันที่
     // สำคัญ: 03-22-39-30-93 ต้องเป็นรายการเลข ไม่ใช่ถูกมองเป็นวันที่
@@ -830,7 +839,7 @@ function parseBlock(lines,bill){
       continue;
     }
 
-    const multiFullRe=/(\d+)\s*(?:=|-)\s*([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)/g;
+    const multiFullRe=/(\d+)\s*(?:=|-)\s*([\d,]+)\s*[*xX×❎✕✖+\/]\s*([\d,]+)/g;
     let mf, foundFull=false;
     while((mf=multiFullRe.exec(line))!==null){
       flushPending();
@@ -1097,6 +1106,20 @@ function parseInput(raw){
     // เช่น "13:12 phoenix🐣 978-โต๊ด 120" -> "978-โต๊ด 120"
     const normalizedMsg=msg.map(line=>{
       if(/^\d{1,2}:\d{2}\s+/.test(line)){
+        // 0) รหัสคู่คั่นด้วย - ที่อยู่ท้ายหัว LINE เช่น "22:15 Prairie🪐✨ 82-28"
+        const hyphenPairTail=line.match(/(?:^|\s)(\d{1,3}\s*-\s*\d{1,3})\s*$/);
+        if(hyphenPairTail) return hyphenPairTail[1].trim();
+
+        // 0.25) รหัส=ค่า1/ค่า2 ที่อยู่ท้ายหัว LINE
+        // เช่น "18:12 phoenix🐣 541=30/30" -> "541=30/30"
+        const slashPriceTail=line.match(/(?:^|\s)(\d{1,3}\s*(?:=|-)\s*[\d,]+\s*\/\s*[\d,]+)\s*$/);
+        if(slashPriceTail) return slashPriceTail[1].trim();
+
+        // 0.5) รหัส + ราคา 2 ค่า ที่อยู่ท้ายหัว LINE และอาจมี emoji ปิดท้าย
+        // เช่น "22:15 Prairie🪐✨ 628  100*200💚" -> "628 100*200"
+        const spacedFullTail=line.match(/(?:^|\s)(\d{1,3}\s+[\d,]+\s*[*xX×❎✕✖+]\s*[\d,]+)\s*[^\d\s,]*\s*$/);
+        if(spacedFullTail) return spacedFullTail[1].trim();
+
         // 1) รหัส=โต๊ด/ตรง ราคา หรือ รหัส-โต๊ด/ตรง ราคา
         // เช่น "16:14 phoenix🐣 352=โต๊ด 120" -> "352=โต๊ด 120"
         // และ "13:12 phoenix🐣 978-โต๊ด 120" -> "978-โต๊ด 120"
