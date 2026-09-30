@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v121</div>
+<div class="app-version">v122</div>
 <div class="wrap">
 
 <div class="grid">
@@ -761,7 +761,7 @@ function parseBlock(lines,bill){
 
     // ราคาอ้างอิงสำหรับเลขกลับแบบแยกบรรทัด
     // เช่น 20*6กลับ, 20*3กลับ
-    const reverseRefOnly=line.match(/^\s*([\d,]+)\s*[*xX×]\s*([36])\s*กลับ\s*$/);
+    const reverseRefOnly=line.match(/^\s*=?\s*([\d,]+)\s*[*xX×]\s*([36])\s*กลับ\s*$/);
     if(reverseRefOnly){
       flushPending();
       items.push({
@@ -1211,6 +1211,18 @@ function inferReverseRule(items,index){
   if(!current || current.type!=="bare" || !current.code) return null;
 
   const codeLen=current.code.length;
+
+  // ถ้ากลุ่ม bare ตามด้วย standalone reverse ref โดยตรง
+  // ให้ ref ด้านล่างเป็นของกลุ่มนี้ก่อน แม้จะมี ref ก่อนหน้าอยู่ใกล้เท่ากัน
+  // เช่น: =20*3กลับ / 769 / =20*6กลับ => 769 ใช้ 6กลับ
+  for(let i=index+1;i<items.length;i++){
+    const it=items[i];
+    if(it.type==="bare") continue;
+    if(it.type==="refReverse" && codeLen===3){
+      return {price:it.price,count:it.count,side:it.side||"normal",dist:i-index};
+    }
+    break;
+  }
 
   // รหัสสอดคล้องกันยังมี priority สูงกว่า helper นี้
   // helper นี้ใช้เมื่อไม่มี related-code anchor แล้ว:
