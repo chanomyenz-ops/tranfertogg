@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v122</div>
+<div class="app-version">v123</div>
 <div class="wrap">
 
 <div class="grid">
@@ -1081,8 +1081,10 @@ function parseInput(raw){
     // เช่น "13:12 phoenix🐣 978-โต๊ด 120" -> "978-โต๊ด 120"
     const normalizedMsg=msg.map(line=>{
       if(/^\d{1,2}:\d{2}\s+/.test(line)){
-        // 1) รหัส-โต๊ด/ตรง ราคา
-        const sideTail=line.match(/(?:^|\s)(\d{1,3}\s*-\s*(?:ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*[\d,]+)\s*$/i);
+        // 1) รหัส=โต๊ด/ตรง ราคา หรือ รหัส-โต๊ด/ตรง ราคา
+        // เช่น "16:14 phoenix🐣 352=โต๊ด 120" -> "352=โต๊ด 120"
+        // และ "13:12 phoenix🐣 978-โต๊ด 120" -> "978-โต๊ด 120"
+        const sideTail=line.match(/(?:^|\s)(\d{1,3}\s*(?:=|-)\s*(?:ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*[\d,]+)\s*$/i);
         if(sideTail) return sideTail[1].trim();
 
         // 2) เลข 3 หลัก + ราคา 3 ค่า สำหรับ 3 กลับ
