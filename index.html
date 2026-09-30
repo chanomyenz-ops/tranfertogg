@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v114</div>
+<div class="app-version">v120</div>
 <div class="wrap">
 
 <div class="grid">
@@ -457,6 +457,22 @@ function parseBlock(lines,bill){
     else if(/(?:^|\s)(?:บน|ตรง)\.?(?:\s|$)/i.test(line)) side="top";
     else if(/(?:^|\s)(?:ล่าง|โต๊ด|โต็ด|โตด)\.?(?:\s|$)/i.test(line)) side="bottom";
 
+    // รองรับ "รหัส =ตรง ราคา" / "รหัส =โต๊ด ราคา"
+    // เช่น 529 =โต๊ด 300 -> ค่า2=300
+    // และใช้เป็น anchor ย้อนกลับให้ bare codes ก่อนหน้าในกลุ่มเดียวกัน
+    const inlineEqSideWords=line.match(/^(\d{1,3})\s*=\s*(ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*([\d,]+)\s*$/i);
+    if(inlineEqSideWords){
+      flushPending();
+      const sideWord=inlineEqSideWords[2];
+      items.push({
+        type:"full1",
+        code:inlineEqSideWords[1],
+        price:norm(inlineEqSideWords[3]),
+        side:/(?:ตรง|บน)/i.test(sideWord) ? "top" : "bottom"
+      });
+      continue;
+    }
+
     // รองรับ "รหัส บน ราคา" และ "รหัส ล่าง ราคา" ในบรรทัดเดียว
     // เช่น 728 บน 120, 728 ล่าง 120
     const inlineSideWords=line.match(/^(\d{1,3})\s*(บน|ล่าง)\s*=?\s*([\d,]+)\s*$/);
@@ -591,6 +607,23 @@ function parseBlock(lines,bill){
         code:reversePrefix[1],
         price:norm(reversePrefix[3]),
         count:+reversePrefix[2],
+        side
+      });
+      continue;
+    }
+
+    // ราคาอ้างอิง 3 กลับแบบยืนเดี่ยว เช่น 130×30×30
+    // ใช้กับ bare 3 หลักก่อนหน้า เช่น 707 / 130×30×30
+    const standaloneReversePrices=line.match(/^([\d,]+)\s*[*xX×]\s*([\d,]+)\s*[*xX×]\s*([\d,]+)\s*$/);
+    if(standaloneReversePrices){
+      flushPending();
+      items.push({
+        type:"refReversePrices",
+        prices:[
+          norm(standaloneReversePrices[1]),
+          norm(standaloneReversePrices[2]),
+          norm(standaloneReversePrices[3])
+        ],
         side
       });
       continue;
@@ -824,6 +857,14 @@ function parseBlock(lines,bill){
       continue;
     }
 
+    // รองรับรหัสตามด้วย = แต่ไม่มีราคา เช่น 84=, 80=
+    // ให้เก็บเป็น bare code เพื่อไปรับ anchor ราคาในกลุ่มเดียวกัน
+    const blankEqualsCode=line.match(/^(\d{1,3})\s*=\s*$/);
+    if(blankEqualsCode){
+      pendingBare.push(blankEqualsCode[1]);
+      continue;
+    }
+
     // ราคาเดียวที่ระบุด้านไว้ในวงเล็บ เช่น 77=20(ล่าง), 35-20(บน)
     // คำในวงเล็บมี priority เหนือ side ที่สืบทอดจากบรรทัดก่อนหน้า
     const inlineSideSingle=line.match(/^(\d{1,3})\s*(?:=|-)\s*([\d,]+)\s*\(\s*(บน|ล่าง)\s*\)\s*$/i);
@@ -968,6 +1009,13 @@ function parseInput(raw){
   for(const msg of messages){
     let bill="";
     for(const line of msg){
+      // แบบเลขบิลเดี่ยวตามด้วยจุด เช่น "17." -> บิล 17
+      const standaloneDotBill=line.match(/^\s*(\d{1,3})\.\s*$/);
+      if(standaloneDotBill){
+        bill=standaloneDotBill[1];
+        continue;
+      }
+
       // แบบวงเล็บเดี่ยว: "(53)" -> บิล 53
       const standaloneParenBill=line.match(/^\s*\((\d{1,3})\)\s*$/);
       if(standaloneParenBill){
@@ -979,6 +1027,15 @@ function parseInput(raw){
       const bm=line.match(/บิล(?:ที่)?\s*(\d+)/i);
       if(bm){
         bill=bm[1];
+        continue;
+      }
+
+      // แบบหัว LINE ลงท้ายด้วยเลขบิล 2-3 หลัก + จุด เช่น
+      // "22:31 phoenix🐣 10." -> บิล 10
+      // จำกัด 2-3 หลัก เพื่อไม่เปลี่ยนพฤติกรรมเดิมของหัว LINE ที่ลงท้ายเลข 1 หลัก + จุด
+      const headerBareDotBill=line.match(/^\d{1,2}:\d{2}\s+.*\s(\d{2,3})\.\s*$/);
+      if(headerBareDotBill){
+        bill=headerBareDotBill[1];
         continue;
       }
 
@@ -1013,7 +1070,12 @@ function parseInput(raw){
         const sideTail=line.match(/(?:^|\s)(\d{1,3}\s*-\s*(?:ตรง|บน|โต๊ด|โต็ด|โตด|ล่าง)\s*=?\s*[\d,]+)\s*$/i);
         if(sideTail) return sideTail[1].trim();
 
-        // 2) หลายรหัสคั่นด้วย - แล้วตามด้วยราคา 2 ค่า
+        // 2) เลข 3 หลัก + ราคา 3 ค่า สำหรับ 3 กลับ
+        // เช่น "08:18 phoenix🐣 882=65×15×15" -> "882=65×15×15"
+        const triplePriceTail=line.match(/(?:^|\s)(\d{3}\s*(?:=|\s+)\s*[\d,]+\s*[*xX×]\s*[\d,]+\s*[*xX×]\s*[\d,]+)\s*$/);
+        if(triplePriceTail) return triplePriceTail[1].trim();
+
+        // 3) หลายรหัสคั่นด้วย - แล้วตามด้วยราคา 2 ค่า
         // รองรับทั้ง = และ ' ก่อนราคา เช่น:
         // 20:33 Simon Pakin 543-43-34-54-45-35-53'100×100
         // 20:33 Simon Pakin 53-35-43-34=100×100
@@ -1025,11 +1087,28 @@ function parseInput(raw){
 
     // ตัดทุกบรรทัดที่เป็น header/ป้ายเลขบิลออกจากการ parse รายการ
     // เช่น "13:48 Simon Pakin บิล 15" เพื่อไม่ให้ 15 กลายเป็นรหัส
-    const cleaned=normalizedMsg.filter(line=>{
+    const cleaned=normalizedMsg.filter((line,idx,arr)=>{
       if(!line) return true;
+
+      // ยอดรวมแบบตัวเลขล้วนท้ายข้อความ หลังบรรทัดชื่อ เช่น:
+      // "หลวงปู่" / "400" แล้วจบข้อความก่อนหัว LINE ใหม่
+      // ไม่ควรให้ 400 กลายเป็นรหัสและสืบทอดราคา/ฝั่งจากรายการก่อนหน้า
+      if(/^\d{1,3}$/.test(line) && idx===arr.length-1){
+        let p=idx-1;
+        while(p>=0 && !arr[p].trim()) p--;
+        const prev=p>=0 ? arr[p].trim() : "";
+        const looksLikeName =
+          prev &&
+          !/\d/.test(prev) &&
+          !/[=*xX×❎✕✖+]/.test(prev) &&
+          !/^(?:บน|ล่าง|ตรง|โต๊ด|โต็ด|โตด|บน\/ล่าง|สามตัวบน|สามตัวล่าง)$/i.test(prev);
+        if(looksLikeName) return false;
+      }
+      if(/^\s*\d{1,3}\.\s*$/.test(line)) return false;
       if(/บิล(?:ที่)?\s*\d+/i.test(line)) return false;
       if(/^\s*\(\d{1,3}\)\s*$/.test(line)) return false;
       if(/^\s*\d{1,3}\.(?!\.)\s*[^\d\s]\S*/.test(line)) return false;
+      if(/^\d{1,2}:\d{2}\s+.*\s\d{2,3}\.\s*$/.test(line)) return false;
       if(/^\d{1,2}:\d{2}\s+.*(?:^|\s)\d{1,3}\.(?!\.)[^\d\s]\S*\s*$/.test(line)) return false;
       return true;
     });
@@ -1167,7 +1246,7 @@ function inferReversePrices(items,index){
 
   for(let i=index-1;i>=0;i--){
     const it=items[i];
-    if(it.type==="reversePrices"){
+    if(it.type==="reversePrices" || it.type==="refReversePrices"){
       prev=it.prices;
       break;
     }
@@ -1177,7 +1256,7 @@ function inferReversePrices(items,index){
 
   for(let i=index+1;i<items.length;i++){
     const it=items[i];
-    if(it.type==="reversePrices"){
+    if(it.type==="reversePrices" || it.type==="refReversePrices"){
       next=it.prices;
       break;
     }
