@@ -136,7 +136,7 @@ body.dark .app-version{
 </style>
 </head>
 <body>
-<div class="app-version">v126</div>
+<div class="app-version">v131</div>
 <div class="wrap">
 
 <div class="grid">
@@ -463,13 +463,14 @@ function parseBlock(lines,bill){
     // ถ้าอยู่ในหัว LINE ให้สถานะนี้ส่งต่อไปยังรายการถัดไปในข้อความนั้น
     // ราคาอ้างอิงเดี่ยวแบบระบุฝั่ง เช่น "=10 บน", "=20 ล่าง"
     // ใช้กับ bare codes ก่อนหน้า แล้วจบสถานะฝั่งตรงบรรทัดนี้
-    const standaloneSideRef=line.match(/^\s*=\s*([\d,]+)\s*(บน|ล่าง)\s*$/);
+    const standaloneSideRef=line.match(/^\s*=\s*([\d,]+)\s*(บน|ล่าง|ตรง|โต๊ด|โต็ด|โตด)\s*$/i);
     if(standaloneSideRef){
       flushPending();
+      const sideWord=standaloneSideRef[2];
       items.push({
         type:"ref1",
         price:norm(standaloneSideRef[1]),
-        side:standaloneSideRef[2]==="บน" ? "top" : "bottom"
+        side:/(?:บน|ตรง)/i.test(sideWord) ? "top" : "bottom"
       });
       side="";
       continue;
@@ -875,6 +876,40 @@ function parseBlock(lines,bill){
       continue;
     }
 
+    // รองรับ "รหัส ค่า1*ค่า2 (ข้อความประกอบ)" เช่น 76 10*10 (งก)
+    // วงเล็บท้ายเป็นคอมเมนต์เท่านั้น ไม่ใช่ตัวกำหนดฝั่ง
+    const spacedFullWithComment=line.match(/^(\d{1,3})\s+([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*\((?!\s*(?:บน|ล่าง)\s*\))[^)]*\)\s*$/i);
+    if(spacedFullWithComment){
+      flushPending();
+      items.push({
+        type:"full2",
+        code:spacedFullWithComment[1],
+        v1:norm(spacedFullWithComment[2]),
+        v2:norm(spacedFullWithComment[3]),
+        side
+      });
+      continue;
+    }
+
+    // รองรับ "รหัส ค่า1*ค่า2 คอมเมนต์" เช่น 76 10*10 งก
+    // ตัดข้อความประกอบท้ายบรรทัด โดยไม่กินคำที่มีความหมายเป็นกฎ
+    const spacedFullWithTrailingText=line.match(/^(\d{1,3})\s+([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s+(.+)$/i);
+    if(spacedFullWithTrailingText){
+      const tail=spacedFullWithTrailingText[4].trim();
+      const isRuleWord=/^(?:บน|ล่าง|ตรง|โต๊ด|โต็ด|โตด|กลับ|ไม่กลับ)$/i.test(tail);
+      if(!isRuleWord){
+        flushPending();
+        items.push({
+          type:"full2",
+          code:spacedFullWithTrailingText[1],
+          v1:norm(spacedFullWithTrailingText[2]),
+          v2:norm(spacedFullWithTrailingText[3]),
+          side
+        });
+        continue;
+      }
+    }
+
     const spacedFull=line.match(/(\d+)\s+([\d,]+)\s*[*xX×❎✕✖+]\s*([\d,]+)\s*$/);
     if(spacedFull){
       flushPending();
@@ -887,6 +922,21 @@ function parseBlock(lines,bill){
     const blankEqualsCode=line.match(/^(\d{1,3})\s*=\s*$/);
     if(blankEqualsCode){
       pendingBare.push(blankEqualsCode[1]);
+      continue;
+    }
+
+    // รองรับ "รหัส (ค่า1*ค่า2)" เช่น 83 (20*20)
+    // ให้ตีความเหมือนรหัส=ค่า1*ค่า2 และใช้เป็น anchor ให้ bare codes ก่อนหน้าได้
+    const parenFull2=line.match(/^(\d{1,3})\s*\(\s*([\d,]+)\s*[*xX×❎✕✖+\/]\s*([\d,]+)\s*\)\s*$/);
+    if(parenFull2){
+      flushPending();
+      items.push({
+        type:"full2",
+        code:parenFull2[1],
+        v1:norm(parenFull2[2]),
+        v2:norm(parenFull2[3]),
+        side
+      });
       continue;
     }
 
@@ -1340,7 +1390,7 @@ function inferReversePrices(items,index){
 }
 
 function getSingleRef(it){
-  if(it.type==="full1" || it.type==="ref1"){
+  if(it.type==="full1" || it.type==="ref1" || it.type==="direct3"){
     if(it.side==="top") return ["top",it.price];
     if(it.side==="bottom") return ["bottom",it.price];
   }
@@ -1412,7 +1462,7 @@ function inferBare(items,index){
 
   for(let i=index-1;i>=0;i--){
     const it=items[i];
-    if(it.type==="full1" && it.code && sameDigits(current.code,it.code)){
+    if((it.type==="full1" || it.type==="direct3") && it.code && sameDigits(current.code,it.code)){
       const singleValue = it.price ?? it.v1 ?? it.value ?? "";
       prevRelatedSingle={value:singleValue, side:it.side || "normal", dist:index-i};
       break;
@@ -1421,7 +1471,7 @@ function inferBare(items,index){
 
   for(let i=index+1;i<items.length;i++){
     const it=items[i];
-    if(it.type==="full1" && it.code && sameDigits(current.code,it.code)){
+    if((it.type==="full1" || it.type==="direct3") && it.code && sameDigits(current.code,it.code)){
       const singleValue = it.price ?? it.v1 ?? it.value ?? "";
       nextRelatedSingle={value:singleValue, side:it.side || "normal", dist:i-index};
       break;
@@ -1493,7 +1543,7 @@ function inferBare(items,index){
 
     if(it.type==="bare") continue;
 
-    if(it.type==="full1" || it.type==="ref1"){
+    if(it.type==="full1" || it.type==="ref1" || it.type==="direct3"){
       const singleValue = it.price ?? it.v1 ?? it.value ?? "";
       if(it.side==="bottom") return ["",singleValue];
       return [singleValue,""];
